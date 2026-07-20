@@ -1,5 +1,9 @@
-import { useState, useEffect, useMemo } from "react";
-import { Droplet, LogOut, Plus, Trash2, Lock, User, Users, Zap, FlaskConical, Package, TrendingUp, Wallet, X, Check, ChevronRight } from "lucide-react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import {
+  Droplet, LogOut, Plus, Trash2, Lock, User, Users, Zap, FlaskConical,
+  Package, TrendingUp, Wallet, X, Check, ChevronRight, FileText, Download,
+} from "lucide-react";
+import html2canvas from "html2canvas";
 import { loadShared, saveShared } from "./lib/storage";
 
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
@@ -7,22 +11,30 @@ const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(
 const money = (v) =>
   (Number(v) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
+const kg = (v) => (Number(v) || 0).toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
+const parsePeso = (v) => Number(String(v).replace(",", "."));
 
+// ---------- CORES DO SISTEMA ----------
+// fundo cinza claro, cards brancos, texto cinza escuro,
+// laranja como cor principal (botões/destaques), roxo como cor secundária
 const PALETTE = {
-  bg: "#1f1626",
-  bgSoft: "#2a1c34",
-  card: "#2e1f3b",
-  cardBorder: "#4a3459",
-  polpa: "#f5a623",
-  polpaSoft: "#f9c463",
-  casca: "#5c2d6b",
-  vine: "#7a9b5e",
-  text: "#f4ece0",
-  textDim: "#c7b8d4",
-  danger: "#e0654f",
-  ok: "#7a9b5e",
+  bg: "#ECECEC",
+  card: "#FFFFFF",
+  cardBorder: "#E1E1E1",
+  polpa: "#F5A623", // laranja — cor principal
+  polpaDark: "#B8720E", // laranja mais escuro, para texto sobre fundo claro
+  polpaText: "#2A1305", // texto sobre botão laranja
+  casca: "#6B3F7A", // roxo — cor secundária
+  cascaSoft: "#F1E9F4",
+  text: "#333333",
+  textDim: "#7A7A7A",
+  danger: "#D9534F",
+  dangerSoft: "#FBEAEA",
+  ok: "#3F8F4F",
+  okSoft: "#EAF5EC",
 };
 
 function Field({ label, children }) {
@@ -37,15 +49,21 @@ function Field({ label, children }) {
 }
 
 const inputCls =
-  "w-full rounded-lg px-3 py-2 bg-black/20 border outline-none focus:ring-2 transition text-[15px]";
-const inputStyle = { borderColor: PALETTE.cardBorder, color: PALETTE.text };
+  "w-full rounded-lg px-3 py-2 border outline-none focus:ring-2 transition text-[15px]";
+const inputStyle = {
+  borderColor: PALETTE.cardBorder,
+  color: PALETTE.text,
+  background: "#FAFAFA",
+  "--tw-ring-color": PALETTE.polpa,
+};
 
 function Btn({ children, onClick, variant = "primary", type = "button", className = "", disabled }) {
   const base = "px-4 py-2 rounded-lg font-medium text-sm transition flex items-center gap-2 justify-center disabled:opacity-40";
   const styles = {
-    primary: { background: PALETTE.polpa, color: "#2a1305" },
+    primary: { background: PALETTE.polpa, color: PALETTE.polpaText },
     ghost: { background: "transparent", color: PALETTE.text, border: `1px solid ${PALETTE.cardBorder}` },
-    danger: { background: "rgba(224,101,79,0.15)", color: PALETTE.danger, border: `1px solid ${PALETTE.danger}55` },
+    secondary: { background: PALETTE.cascaSoft, color: PALETTE.casca, border: `1px solid ${PALETTE.casca}33` },
+    danger: { background: PALETTE.dangerSoft, color: PALETTE.danger, border: `1px solid ${PALETTE.danger}55` },
   };
   return (
     <button
@@ -93,11 +111,14 @@ function LoginScreen({ users, onLogin }) {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4" style={{ background: `radial-gradient(circle at 20% 10%, ${PALETTE.casca} 0%, ${PALETTE.bg} 55%)` }}>
+    <div
+      className="min-h-screen flex items-center justify-center px-4"
+      style={{ background: `radial-gradient(circle at 20% 10%, rgba(107,63,122,0.16) 0%, ${PALETTE.bg} 60%)` }}
+    >
       <div className="w-full max-w-sm">
         <div className="flex flex-col items-center mb-8">
           <div className="w-16 h-16 rounded-full flex items-center justify-center mb-3" style={{ background: PALETTE.polpa }}>
-            <Droplet size={28} style={{ color: "#2a1305" }} />
+            <Droplet size={28} style={{ color: PALETTE.polpaText }} />
           </div>
           <h1 className="text-2xl font-bold" style={{ color: PALETTE.text, fontFamily: "Georgia, serif" }}>Sítio Maracujá</h1>
           <p className="text-sm mt-1" style={{ color: PALETTE.textDim }}>Controle de produção e polpa</p>
@@ -125,26 +146,102 @@ function LoginScreen({ users, onLogin }) {
   );
 }
 
-// ---------- COLHEITA (baldes) ----------
+// ---------- ADICIONAR BALDE (peso individual) ----------
+// Componente reutilizado na Colheita e nas Entregas: cada balde tem um peso próprio.
+function BaldeAdder({ onAdd, proximoNumero }) {
+  const [peso, setPeso] = useState("");
+
+  const add = () => {
+    const v = parsePeso(peso);
+    if (!v || v <= 0) return;
+    onAdd(v);
+    setPeso("");
+  };
+
+  return (
+    <div className="flex items-end gap-2">
+      <div className="flex-1">
+        <Field label={`Balde ${proximoNumero} — peso (kg)`}>
+          <input
+            type="number"
+            step="0.1"
+            inputMode="decimal"
+            className={inputCls}
+            style={inputStyle}
+            value={peso}
+            onChange={(e) => setPeso(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && add()}
+            placeholder="ex: 13,7"
+          />
+        </Field>
+      </div>
+      <Btn onClick={add}><Plus size={16} /> Adicionar</Btn>
+    </div>
+  );
+}
+
+function ListaBaldes({ baldes, onRemove }) {
+  if (baldes.length === 0) return null;
+  return (
+    <div className="mt-3 space-y-1 max-h-48 overflow-auto">
+      {baldes.map((p, i) => (
+        <div key={i} className="flex items-center justify-between text-sm rounded-md px-3 py-1.5" style={{ background: PALETTE.bg }}>
+          <span style={{ color: PALETTE.text }}>Balde {i + 1} — {kg(p)} kg</span>
+          <button onClick={() => onRemove(i)}><Trash2 size={13} style={{ color: PALETTE.danger }} /></button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ResumoBaldes({ totalBaldes, totalKg, valor, mostrarValor }) {
+  return (
+    <div className={`grid ${mostrarValor ? "grid-cols-3" : "grid-cols-2"} gap-3 mt-3`}>
+      <div className="rounded-lg px-3 py-2 text-center" style={{ background: PALETTE.bg }}>
+        <p className="text-lg font-bold" style={{ color: PALETTE.text }}>{totalBaldes}</p>
+        <p className="text-xs" style={{ color: PALETTE.textDim }}>baldes</p>
+      </div>
+      <div className="rounded-lg px-3 py-2 text-center" style={{ background: PALETTE.bg }}>
+        <p className="text-lg font-bold" style={{ color: PALETTE.text }}>{kg(totalKg)}</p>
+        <p className="text-xs" style={{ color: PALETTE.textDim }}>kg</p>
+      </div>
+      {mostrarValor && (
+        <div className="rounded-lg px-3 py-2 text-center" style={{ background: PALETTE.bg }}>
+          <p className="text-lg font-bold" style={{ color: PALETTE.polpaDark }}>{money(valor)}</p>
+          <p className="text-xs" style={{ color: PALETTE.textDim }}>valor</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- COLHEITA (baldes com peso individual) ----------
 function ColheitaTab({ colheitas, setColheitas, precoKg, setPrecoKg, isAdmin, currentUser }) {
   const [semanaInicio, setSemanaInicio] = useState(todayISO());
   const [semanaFim, setSemanaFim] = useState(todayISO());
-  const [baldes, setBaldes] = useState("");
+  const [baldesAtuais, setBaldesAtuais] = useState([]);
 
-  const addColheita = async () => {
-    if (!baldes || Number(baldes) <= 0) return;
+  const addBalde = (peso) => setBaldesAtuais((b) => [...b, peso]);
+  const removeBaldeAtual = (idx) => setBaldesAtuais((b) => b.filter((_, i) => i !== idx));
+
+  const totalBaldesAtual = baldesAtuais.length;
+  const totalKgAtual = baldesAtuais.reduce((s, p) => s + p, 0);
+  const totalValorAtual = totalKgAtual * precoKg;
+
+  const salvarSemana = async () => {
+    if (baldesAtuais.length === 0) return;
     const novo = {
       id: uid(),
       semanaInicio,
       semanaFim,
-      baldes: Number(baldes),
+      baldes: baldesAtuais,
       registradoPor: currentUser.nome,
       data: todayISO(),
     };
     const next = [...colheitas, novo];
     setColheitas(next);
     await saveShared("colheitas", next);
-    setBaldes("");
+    setBaldesAtuais([]);
   };
 
   const removerColheita = async (id) => {
@@ -153,19 +250,21 @@ function ColheitaTab({ colheitas, setColheitas, precoKg, setPrecoKg, isAdmin, cu
     await saveShared("colheitas", next);
   };
 
-  const totalBaldes = colheitas.reduce((s, c) => s + c.baldes, 0);
-  const totalKg = totalBaldes * 15;
-  const totalValor = totalKg * precoKg;
+  const totalBaldesGeral = colheitas.reduce((s, c) => s + c.baldes.length, 0);
+  const totalKgGeral = colheitas.reduce((s, c) => s + c.baldes.reduce((a, p) => a + p, 0), 0);
+  const totalValorGeral = totalKgGeral * precoKg;
 
   const porSemana = useMemo(() => {
     const map = {};
     colheitas.forEach((c) => {
       const key = `${c.semanaInicio} a ${c.semanaFim}`;
-      if (!map[key]) map[key] = { baldes: 0, semanaInicio: c.semanaInicio, semanaFim: c.semanaFim };
-      map[key].baldes += c.baldes;
+      const kgSemana = c.baldes.reduce((a, p) => a + p, 0);
+      if (!map[key]) map[key] = { baldes: 0, kg: 0, semanaInicio: c.semanaInicio, semanaFim: c.semanaFim };
+      map[key].baldes += c.baldes.length;
+      map[key].kg += kgSemana;
     });
     return Object.entries(map)
-      .map(([key, v]) => ({ key, ...v, kg: v.baldes * 15, valor: v.baldes * 15 * precoKg }))
+      .map(([key, v]) => ({ key, ...v, valor: v.kg * precoKg }))
       .sort((a, b) => (a.semanaInicio < b.semanaInicio ? 1 : -1));
   }, [colheitas, precoKg]);
 
@@ -193,7 +292,7 @@ function ColheitaTab({ colheitas, setColheitas, precoKg, setPrecoKg, isAdmin, cu
       )}
 
       <Card title="Registrar colheita da semana" icon={Package}>
-        <div className="grid grid-cols-2 gap-3 mb-3">
+        <div className="grid grid-cols-2 gap-3 mb-4">
           <Field label="Início da semana">
             <input type="date" className={inputCls} style={inputStyle} value={semanaInicio} onChange={(e) => setSemanaInicio(e.target.value)} />
           </Field>
@@ -201,16 +300,13 @@ function ColheitaTab({ colheitas, setColheitas, precoKg, setPrecoKg, isAdmin, cu
             <input type="date" className={inputCls} style={inputStyle} value={semanaFim} onChange={(e) => setSemanaFim(e.target.value)} />
           </Field>
         </div>
-        <Field label="Quantidade de baldes de 15kg">
-          <input type="number" className={inputCls} style={inputStyle} value={baldes} onChange={(e) => setBaldes(e.target.value)} placeholder="0" />
-        </Field>
-        {baldes > 0 && (
-          <p className="text-sm mt-2" style={{ color: PALETTE.polpaSoft }}>
-            = {Number(baldes) * 15} kg {isAdmin && <>· {money(Number(baldes) * 15 * precoKg)}</>}
-          </p>
-        )}
-        <Btn onClick={addColheita} className="mt-3">
-          <Plus size={16} /> Adicionar
+
+        <BaldeAdder onAdd={addBalde} proximoNumero={totalBaldesAtual + 1} />
+        <ListaBaldes baldes={baldesAtuais} onRemove={removeBaldeAtual} />
+        <ResumoBaldes totalBaldes={totalBaldesAtual} totalKg={totalKgAtual} valor={totalValorAtual} mostrarValor={isAdmin} />
+
+        <Btn onClick={salvarSemana} disabled={baldesAtuais.length === 0} className="mt-4 w-full">
+          <Check size={16} /> Salvar registro da semana
         </Btn>
       </Card>
 
@@ -218,12 +314,12 @@ function ColheitaTab({ colheitas, setColheitas, precoKg, setPrecoKg, isAdmin, cu
         {porSemana.length === 0 && <p style={{ color: PALETTE.textDim }} className="text-sm">Nenhum registro ainda.</p>}
         <div className="space-y-2">
           {porSemana.map((s) => (
-            <div key={s.key} className="flex items-center justify-between rounded-lg px-3 py-2" style={{ background: "rgba(0,0,0,0.18)" }}>
+            <div key={s.key} className="flex items-center justify-between rounded-lg px-3 py-2" style={{ background: PALETTE.bg }}>
               <div>
                 <p className="text-sm font-medium" style={{ color: PALETTE.text }}>{s.semanaInicio} → {s.semanaFim}</p>
-                <p className="text-xs" style={{ color: PALETTE.textDim }}>{s.baldes} baldes · {s.kg} kg</p>
+                <p className="text-xs" style={{ color: PALETTE.textDim }}>{s.baldes} baldes · {kg(s.kg)} kg</p>
               </div>
-              {isAdmin && <p className="font-semibold" style={{ color: PALETTE.polpa }}>{money(s.valor)}</p>}
+              {isAdmin && <p className="font-semibold" style={{ color: PALETTE.polpaDark }}>{money(s.valor)}</p>}
             </div>
           ))}
         </div>
@@ -232,16 +328,16 @@ function ColheitaTab({ colheitas, setColheitas, precoKg, setPrecoKg, isAdmin, cu
       <Card title="Total geral">
         <div className="grid grid-cols-3 gap-3 text-center">
           <div>
-            <p className="text-2xl font-bold" style={{ color: PALETTE.text }}>{totalBaldes}</p>
+            <p className="text-2xl font-bold" style={{ color: PALETTE.text }}>{totalBaldesGeral}</p>
             <p className="text-xs" style={{ color: PALETTE.textDim }}>baldes</p>
           </div>
           <div>
-            <p className="text-2xl font-bold" style={{ color: PALETTE.text }}>{totalKg}</p>
+            <p className="text-2xl font-bold" style={{ color: PALETTE.text }}>{kg(totalKgGeral)}</p>
             <p className="text-xs" style={{ color: PALETTE.textDim }}>kg</p>
           </div>
           {isAdmin && (
             <div>
-              <p className="text-2xl font-bold" style={{ color: PALETTE.polpa }}>{money(totalValor)}</p>
+              <p className="text-2xl font-bold" style={{ color: PALETTE.polpaDark }}>{money(totalValorGeral)}</p>
               <p className="text-xs" style={{ color: PALETTE.textDim }}>valor</p>
             </div>
           )}
@@ -253,7 +349,7 @@ function ColheitaTab({ colheitas, setColheitas, precoKg, setPrecoKg, isAdmin, cu
           <div className="space-y-1 max-h-52 overflow-auto">
             {colheitas.slice().reverse().map((c) => (
               <div key={c.id} className="flex items-center justify-between text-sm py-1">
-                <span style={{ color: PALETTE.textDim }}>{c.semanaInicio}→{c.semanaFim} · {c.baldes} baldes · {c.registradoPor}</span>
+                <span style={{ color: PALETTE.textDim }}>{c.semanaInicio}→{c.semanaFim} · {c.baldes.length} baldes · {c.registradoPor}</span>
                 <button onClick={() => removerColheita(c.id)}><Trash2 size={14} style={{ color: PALETTE.danger }} /></button>
               </div>
             ))}
@@ -308,19 +404,19 @@ function ListaFinanceira({ titulo, icon, itens, setItens, storageKey, campos, is
       </Card>
 
       <Card title={`Total em ${titulo.toLowerCase()}`}>
-        <p className="text-2xl font-bold" style={{ color: PALETTE.polpa }}>{money(total)}</p>
+        <p className="text-2xl font-bold" style={{ color: PALETTE.polpaDark }}>{money(total)}</p>
       </Card>
 
       <Card title="Histórico">
         {itens.length === 0 && <p style={{ color: PALETTE.textDim }} className="text-sm">Nenhum lançamento.</p>}
         <div className="space-y-2">
           {itens.slice().reverse().map((i) => (
-            <div key={i.id} className="flex items-center justify-between rounded-lg px-3 py-2" style={{ background: "rgba(0,0,0,0.18)" }}>
+            <div key={i.id} className="flex items-center justify-between rounded-lg px-3 py-2" style={{ background: PALETTE.bg }}>
               <div className="text-sm" style={{ color: PALETTE.text }}>
                 {campos.filter((c) => c.key !== "valor").map((c) => i[c.key]).filter(Boolean).join(" · ")}
               </div>
               <div className="flex items-center gap-3">
-                <span className="font-semibold" style={{ color: PALETTE.polpa }}>{money(i.valor)}</span>
+                <span className="font-semibold" style={{ color: PALETTE.polpaDark }}>{money(i.valor)}</span>
                 <button onClick={() => remover(i.id)}><Trash2 size={14} style={{ color: PALETTE.danger }} /></button>
               </div>
             </div>
@@ -331,17 +427,167 @@ function ListaFinanceira({ titulo, icon, itens, setItens, storageKey, campos, is
   );
 }
 
+// ---------- RELATÓRIO PARA O COMPRADOR (gera PNG) ----------
+function Linha({ label, value }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#333", margin: "4px 0" }}>
+      <span>{label}</span>
+      <span style={{ fontWeight: 700 }}>{value}</span>
+    </div>
+  );
+}
+
+function RelatorioComprador({ comprador, entregas, onClose }) {
+  const reportRef = useRef(null);
+  const [baixando, setBaixando] = useState(false);
+
+  const totalBaldes = entregas.reduce((s, e) => s + (e.baldes || []).length, 0);
+  const totalKg = entregas.reduce((s, e) => s + (e.baldes || []).reduce((a, p) => a + p, 0), 0);
+  const valorTotal = entregas.reduce((s, e) => s + Number(e.valor || 0), 0);
+  const precoMedio = totalKg > 0 ? valorTotal / totalKg : 0;
+
+  const datas = entregas.map((e) => e.dataEntrega).filter(Boolean).sort();
+  const periodoInicio = datas[0];
+  const periodoFim = datas[datas.length - 1];
+
+  const prazos = entregas.map((e) => e.prazo).filter(Boolean).sort();
+  const prazoExibido = prazos[prazos.length - 1];
+
+  const todasPagas = entregas.length > 0 && entregas.every((e) => e.pago);
+  const nenhumaPaga = entregas.every((e) => !e.pago);
+  const status = todasPagas ? "Pago" : nenhumaPaga ? "Pendente" : "Parcialmente pago";
+  const statusCores = {
+    Pago: { bg: PALETTE.okSoft, cor: PALETTE.ok },
+    Pendente: { bg: PALETTE.dangerSoft, cor: PALETTE.danger },
+    "Parcialmente pago": { bg: "#FDF3E3", cor: PALETTE.polpaDark },
+  };
+
+  const baixar = async () => {
+    setBaixando(true);
+    try {
+      const canvas = await html2canvas(reportRef.current, { scale: 2, backgroundColor: "#ffffff" });
+      const link = document.createElement("a");
+      link.download = `relatorio-${comprador.replace(/\s+/g, "-").toLowerCase()}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    } catch (err) {
+      console.error(err);
+      alert("Não foi possível gerar a imagem do relatório.");
+    }
+    setBaixando(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.55)" }}>
+      <div className="w-full max-w-md max-h-[92vh] overflow-auto rounded-2xl" style={{ background: PALETTE.card }}>
+        <div className="flex items-center justify-between px-4 py-3 border-b sticky top-0" style={{ borderColor: PALETTE.cardBorder, background: PALETTE.card }}>
+          <p className="font-semibold" style={{ color: PALETTE.text }}>Relatório — {comprador}</p>
+          <button onClick={onClose}><X size={18} style={{ color: PALETTE.textDim }} /></button>
+        </div>
+
+        <div className="p-4">
+          <div
+            ref={reportRef}
+            style={{ width: "100%", maxWidth: 440, margin: "0 auto", background: "#FFFFFF", padding: 28, fontFamily: "Georgia, serif" }}
+          >
+            <div style={{ borderBottom: `4px solid ${PALETTE.polpa}`, paddingBottom: 14, marginBottom: 18 }}>
+              <p style={{ fontSize: 22, fontWeight: 700, color: PALETTE.casca, margin: 0 }}>Sítio Maracujá</p>
+              <p style={{ fontSize: 13, color: "#777", margin: "2px 0 0" }}>Relatório de entrega de polpa</p>
+            </div>
+
+            <p style={{ fontSize: 16, fontWeight: 700, color: "#333", margin: "0 0 4px" }}>Comprador: {comprador}</p>
+            {periodoInicio && (
+              <p style={{ fontSize: 13, color: "#555", margin: "0 0 14px" }}>
+                Período: {periodoInicio}{periodoFim && periodoFim !== periodoInicio ? ` a ${periodoFim}` : ""}
+              </p>
+            )}
+
+            <div style={{ background: "#F7F7F7", borderRadius: 10, padding: 14, marginBottom: 14 }}>
+              <p style={{ fontSize: 12, fontWeight: 700, color: "#555", margin: "0 0 8px", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                Baldes entregues
+              </p>
+              {entregas.map((e) => (
+                <div key={e.id} style={{ marginBottom: 8 }}>
+                  {entregas.length > 1 && (
+                    <p style={{ fontSize: 11, color: "#999", margin: "0 0 3px" }}>Entrega de {e.dataEntrega}</p>
+                  )}
+                  {(e.baldes || []).map((p, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#333", padding: "2px 0" }}>
+                      <span>Balde {i + 1}</span>
+                      <span>{kg(p)} kg</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+
+            <Linha label="Total de baldes" value={totalBaldes} />
+            <Linha label="Total de quilos" value={`${kg(totalKg)} kg`} />
+            <Linha label="Preço por kg" value={money(precoMedio)} />
+            {prazoExibido && <Linha label="Prazo de pagamento" value={prazoExibido} />}
+
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 18, color: PALETTE.polpaDark, margin: "10px 0 4px", paddingTop: 10, borderTop: "1px solid #eee" }}>
+              <span style={{ fontWeight: 700 }}>Valor total</span>
+              <span style={{ fontWeight: 700 }}>{money(valorTotal)}</span>
+            </div>
+
+            <div
+              style={{
+                marginTop: 12,
+                display: "inline-block",
+                padding: "5px 14px",
+                borderRadius: 999,
+                fontSize: 12,
+                fontWeight: 700,
+                background: statusCores[status].bg,
+                color: statusCores[status].cor,
+              }}
+            >
+              {status}
+            </div>
+          </div>
+        </div>
+
+        <div className="px-4 pb-4">
+          <Btn onClick={baixar} disabled={baixando} className="w-full">
+            {baixando ? "Gerando imagem..." : (<><Download size={16} /> Baixar imagem</>)}
+          </Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---------- ENTREGAS ----------
-function EntregasTab({ entregas, setEntregas, isAdmin }) {
-  const [form, setForm] = useState({ comprador: "", kg: "", valor: "", prazo: "", dataEntrega: todayISO() });
+function EntregasTab({ entregas, setEntregas, isAdmin, precoKg }) {
+  const [form, setForm] = useState({ comprador: "", dataEntrega: todayISO(), prazo: "", precoKgEntrega: precoKg });
+  const [baldesAtuais, setBaldesAtuais] = useState([]);
+  const [compradorFiltro, setCompradorFiltro] = useState("");
+  const [relatorioAberto, setRelatorioAberto] = useState(false);
+
+  const addBalde = (peso) => setBaldesAtuais((b) => [...b, peso]);
+  const removeBalde = (idx) => setBaldesAtuais((b) => b.filter((_, i) => i !== idx));
+
+  const totalKgAtual = baldesAtuais.reduce((s, p) => s + p, 0);
+  const valorAtual = totalKgAtual * (Number(form.precoKgEntrega) || 0);
 
   const add = async () => {
-    if (!form.comprador || !form.kg || !form.valor) return;
-    const novo = { id: uid(), ...form, pago: false };
+    if (!form.comprador || baldesAtuais.length === 0) return;
+    const novo = {
+      id: uid(),
+      comprador: form.comprador.trim(),
+      baldes: baldesAtuais,
+      dataEntrega: form.dataEntrega,
+      prazo: form.prazo,
+      precoKgEntrega: Number(form.precoKgEntrega) || 0,
+      valor: totalKgAtual * (Number(form.precoKgEntrega) || 0),
+      pago: false,
+    };
     const next = [...entregas, novo];
     setEntregas(next);
     await saveShared("entregas", next);
-    setForm({ comprador: "", kg: "", valor: "", prazo: "", dataEntrega: todayISO() });
+    setForm({ comprador: "", dataEntrega: todayISO(), prazo: "", precoKgEntrega: precoKg });
+    setBaldesAtuais([]);
   };
 
   const togglePago = async (id) => {
@@ -361,17 +607,41 @@ function EntregasTab({ entregas, setEntregas, isAdmin }) {
   const totalReceber = entregas.filter((e) => !e.pago).reduce((s, e) => s + Number(e.valor || 0), 0);
   const totalRecebido = entregas.filter((e) => e.pago).reduce((s, e) => s + Number(e.valor || 0), 0);
 
+  const compradores = useMemo(
+    () => Array.from(new Set(entregas.map((e) => e.comprador))).sort(),
+    [entregas]
+  );
+
+  const entregasDoComprador = useMemo(
+    () => entregas.filter((e) => e.comprador === compradorFiltro),
+    [entregas, compradorFiltro]
+  );
+
   return (
     <div className="space-y-5">
       <Card title="Nova entrega de polpa" icon={Package}>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Comprador"><input className={inputCls} style={inputStyle} value={form.comprador} onChange={(e) => setForm((f) => ({ ...f, comprador: e.target.value }))} /></Field>
-          <Field label="Data da entrega"><input type="date" className={inputCls} style={inputStyle} value={form.dataEntrega} onChange={(e) => setForm((f) => ({ ...f, dataEntrega: e.target.value }))} /></Field>
-          <Field label="Quilos (kg)"><input type="number" className={inputCls} style={inputStyle} value={form.kg} onChange={(e) => setForm((f) => ({ ...f, kg: e.target.value }))} /></Field>
-          <Field label="Valor a pagar (R$)"><input type="number" step="0.01" className={inputCls} style={inputStyle} value={form.valor} onChange={(e) => setForm((f) => ({ ...f, valor: e.target.value }))} /></Field>
-          <Field label="Prazo de pagamento"><input type="date" className={inputCls} style={inputStyle} value={form.prazo} onChange={(e) => setForm((f) => ({ ...f, prazo: e.target.value }))} /></Field>
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <Field label="Comprador">
+            <input className={inputCls} style={inputStyle} value={form.comprador} onChange={(e) => setForm((f) => ({ ...f, comprador: e.target.value }))} />
+          </Field>
+          <Field label="Data da entrega">
+            <input type="date" className={inputCls} style={inputStyle} value={form.dataEntrega} onChange={(e) => setForm((f) => ({ ...f, dataEntrega: e.target.value }))} />
+          </Field>
+          <Field label="Prazo de pagamento">
+            <input type="date" className={inputCls} style={inputStyle} value={form.prazo} onChange={(e) => setForm((f) => ({ ...f, prazo: e.target.value }))} />
+          </Field>
+          <Field label="Preço combinado (R$/kg)">
+            <input type="number" step="0.01" className={inputCls} style={inputStyle} value={form.precoKgEntrega} onChange={(e) => setForm((f) => ({ ...f, precoKgEntrega: e.target.value }))} />
+          </Field>
         </div>
-        <Btn onClick={add} className="mt-3"><Plus size={16} /> Adicionar</Btn>
+
+        <BaldeAdder onAdd={addBalde} proximoNumero={baldesAtuais.length + 1} />
+        <ListaBaldes baldes={baldesAtuais} onRemove={removeBalde} />
+        <ResumoBaldes totalBaldes={baldesAtuais.length} totalKg={totalKgAtual} valor={valorAtual} mostrarValor />
+
+        <Btn onClick={add} disabled={!form.comprador || baldesAtuais.length === 0} className="mt-4 w-full">
+          <Plus size={16} /> Registrar entrega
+        </Btn>
       </Card>
 
       <div className="grid grid-cols-2 gap-3">
@@ -379,39 +649,70 @@ function EntregasTab({ entregas, setEntregas, isAdmin }) {
         <Card title="Recebido"><p className="text-xl font-bold" style={{ color: PALETTE.ok }}>{money(totalRecebido)}</p></Card>
       </div>
 
+      <Card title="Relatório para comprador" icon={FileText}>
+        {compradores.length === 0 ? (
+          <p className="text-sm" style={{ color: PALETTE.textDim }}>Registre uma entrega para poder gerar relatórios.</p>
+        ) : (
+          <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
+            <div className="flex-1">
+              <Field label="Comprador">
+                <select className={inputCls} style={inputStyle} value={compradorFiltro} onChange={(e) => setCompradorFiltro(e.target.value)}>
+                  <option value="">Selecione um comprador...</option>
+                  {compradores.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </Field>
+            </div>
+            <Btn onClick={() => setRelatorioAberto(true)} disabled={!compradorFiltro} variant="secondary" className="sm:w-auto">
+              <FileText size={16} /> Gerar relatório
+            </Btn>
+          </div>
+        )}
+      </Card>
+
       <Card title="Entregas">
         {entregas.length === 0 && <p style={{ color: PALETTE.textDim }} className="text-sm">Nenhuma entrega registrada.</p>}
         <div className="space-y-2">
-          {entregas.slice().reverse().map((e) => (
-            <div key={e.id} className="rounded-lg px-3 py-2" style={{ background: "rgba(0,0,0,0.18)" }}>
-              <div className="flex items-center justify-between">
-                <p className="font-medium" style={{ color: PALETTE.text }}>{e.comprador}</p>
-                <button onClick={() => remover(e.id)}><Trash2 size={14} style={{ color: PALETTE.danger }} /></button>
+          {entregas.slice().reverse().map((e) => {
+            const kgEntrega = (e.baldes || []).reduce((s, p) => s + p, 0);
+            return (
+              <div key={e.id} className="rounded-lg px-3 py-2" style={{ background: PALETTE.bg }}>
+                <div className="flex items-center justify-between">
+                  <p className="font-medium" style={{ color: PALETTE.text }}>{e.comprador}</p>
+                  <button onClick={() => remover(e.id)}><Trash2 size={14} style={{ color: PALETTE.danger }} /></button>
+                </div>
+                <p className="text-xs" style={{ color: PALETTE.textDim }}>
+                  {(e.baldes || []).length} baldes · {kg(kgEntrega)} kg · {money(e.valor)} · entregue em {e.dataEntrega} {e.prazo && `· prazo ${e.prazo}`}
+                </p>
+                <button
+                  onClick={() => togglePago(e.id)}
+                  className="mt-2 text-xs px-2 py-1 rounded-md inline-flex items-center gap-1"
+                  style={{
+                    background: e.pago ? PALETTE.okSoft : PALETTE.dangerSoft,
+                    color: e.pago ? PALETTE.ok : PALETTE.danger,
+                  }}
+                >
+                  {e.pago ? <Check size={12} /> : <X size={12} />} {e.pago ? "Pago" : "Pendente — marcar como pago"}
+                </button>
               </div>
-              <p className="text-xs" style={{ color: PALETTE.textDim }}>
-                {e.kg} kg · {money(e.valor)} · entregue em {e.dataEntrega} {e.prazo && `· prazo ${e.prazo}`}
-              </p>
-              <button
-                onClick={() => togglePago(e.id)}
-                className="mt-2 text-xs px-2 py-1 rounded-md inline-flex items-center gap-1"
-                style={{
-                  background: e.pago ? "rgba(122,155,94,0.2)" : "rgba(224,101,79,0.2)",
-                  color: e.pago ? PALETTE.ok : PALETTE.danger,
-                }}
-              >
-                {e.pago ? <Check size={12} /> : <X size={12} />} {e.pago ? "Pago" : "Pendente — marcar como pago"}
-              </button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </Card>
+
+      {relatorioAberto && (
+        <RelatorioComprador
+          comprador={compradorFiltro}
+          entregas={entregasDoComprador}
+          onClose={() => setRelatorioAberto(false)}
+        />
+      )}
     </div>
   );
 }
 
 // ---------- DASHBOARD ----------
 function Dashboard({ colheitas, precoKg, pagamentosEder, energia, quimicos, entregas }) {
-  const totalKg = colheitas.reduce((s, c) => s + c.baldes, 0) * 15;
+  const totalKg = colheitas.reduce((s, c) => s + c.baldes.reduce((a, p) => a + p, 0), 0);
   const producaoValor = totalKg * precoKg;
   const totalEder = pagamentosEder.reduce((s, p) => s + Number(p.valor || 0), 0);
   const totalEnergia = energia.reduce((s, p) => s + Number(p.valor || 0), 0);
@@ -424,10 +725,10 @@ function Dashboard({ colheitas, precoKg, pagamentosEder, energia, quimicos, entr
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3">
-        <Card title="Produção total"><p className="text-xl font-bold" style={{ color: PALETTE.text }}>{totalKg} kg</p><p className="text-xs" style={{ color: PALETTE.textDim }}>{money(producaoValor)} ao preço atual</p></Card>
+        <Card title="Produção total"><p className="text-xl font-bold" style={{ color: PALETTE.text }}>{kg(totalKg)} kg</p><p className="text-xs" style={{ color: PALETTE.textDim }}>{money(producaoValor)} ao preço atual</p></Card>
         <Card title="Despesas totais"><p className="text-xl font-bold" style={{ color: PALETTE.danger }}>{money(totalDespesas)}</p><p className="text-xs" style={{ color: PALETTE.textDim }}>Eder + energia + químicos</p></Card>
         <Card title="Recebido de entregas"><p className="text-xl font-bold" style={{ color: PALETTE.ok }}>{money(totalRecebido)}</p></Card>
-        <Card title="A receber"><p className="text-xl font-bold" style={{ color: PALETTE.polpa }}>{money(aReceber)}</p></Card>
+        <Card title="A receber"><p className="text-xl font-bold" style={{ color: PALETTE.polpaDark }}>{money(aReceber)}</p></Card>
       </div>
       <Card title="Lucro (recebido − despesas)" icon={TrendingUp}>
         <p className="text-3xl font-bold" style={{ color: lucro >= 0 ? PALETTE.ok : PALETTE.danger }}>{money(lucro)}</p>
@@ -473,7 +774,7 @@ function UsuariosTab({ users, setUsers }) {
           <Field label="Senha"><input className={inputCls} style={inputStyle} value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} /></Field>
           <Field label="Função">
             <select className={inputCls} style={inputStyle} value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}>
-              <option value="funcionario">Funcionário (só lança colheita)</option>
+              <option value="funcionario">Funcionário (só vê o Painel)</option>
               <option value="admin">Dono (acesso total)</option>
             </select>
           </Field>
@@ -483,7 +784,7 @@ function UsuariosTab({ users, setUsers }) {
       <Card title="Usuários cadastrados">
         <div className="space-y-2">
           {users.map((u) => (
-            <div key={u.username} className="flex items-center justify-between rounded-lg px-3 py-2" style={{ background: "rgba(0,0,0,0.18)" }}>
+            <div key={u.username} className="flex items-center justify-between rounded-lg px-3 py-2" style={{ background: PALETTE.bg }}>
               <div>
                 <p className="text-sm font-medium" style={{ color: PALETTE.text }}>{u.nome} <span style={{ color: PALETTE.textDim }}>· @{u.username}</span></p>
                 <p className="text-xs" style={{ color: PALETTE.textDim }}>{u.role === "admin" ? "Dono" : "Funcionário"}</p>
@@ -539,6 +840,7 @@ export default function App() {
 
   const isAdmin = currentUser.role === "admin";
 
+  // Funcionário: acesso somente ao Painel, em modo de visualização.
   const tabsAdmin = [
     { key: "dashboard", label: "Painel", icon: TrendingUp },
     { key: "colheita", label: "Colheita", icon: Package },
@@ -548,12 +850,12 @@ export default function App() {
     { key: "quimicos", label: "Químicos", icon: FlaskConical },
     { key: "usuarios", label: "Usuários", icon: Users },
   ];
-  const tabsFuncionario = [{ key: "colheita", label: "Colheita", icon: Package }];
+  const tabsFuncionario = [{ key: "dashboard", label: "Painel", icon: TrendingUp }];
   const tabs = isAdmin ? tabsAdmin : tabsFuncionario;
 
   return (
     <div className="min-h-screen" style={{ background: PALETTE.bg }}>
-      <header className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: PALETTE.cardBorder }}>
+      <header className="flex items-center justify-between px-5 py-4 border-b" style={{ background: PALETTE.card, borderColor: PALETTE.cardBorder }}>
         <div className="flex items-center gap-2">
           <Droplet size={20} style={{ color: PALETTE.polpa }} />
           <span className="font-bold" style={{ color: PALETTE.text, fontFamily: "Georgia, serif" }}>Sítio Maracujá</span>
@@ -566,7 +868,7 @@ export default function App() {
         </div>
       </header>
 
-      <nav className="flex gap-2 px-5 py-3 overflow-x-auto border-b" style={{ borderColor: PALETTE.cardBorder }}>
+      <nav className="flex gap-2 px-5 py-3 overflow-x-auto border-b" style={{ background: PALETTE.card, borderColor: PALETTE.cardBorder }}>
         {tabs.map((t) => (
           <button
             key={t.key}
@@ -574,7 +876,7 @@ export default function App() {
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm whitespace-nowrap transition"
             style={{
               background: tab === t.key ? PALETTE.polpa : "transparent",
-              color: tab === t.key ? "#2a1305" : PALETTE.textDim,
+              color: tab === t.key ? PALETTE.polpaText : PALETTE.textDim,
               border: `1px solid ${tab === t.key ? PALETTE.polpa : PALETTE.cardBorder}`,
             }}
           >
@@ -584,14 +886,14 @@ export default function App() {
       </nav>
 
       <main className="p-5 max-w-2xl mx-auto">
-        {tab === "dashboard" && isAdmin && (
+        {tab === "dashboard" && (
           <Dashboard colheitas={colheitas} precoKg={precoKg} pagamentosEder={pagamentosEder} energia={energia} quimicos={quimicos} entregas={entregas} />
         )}
-        {tab === "colheita" && (
+        {tab === "colheita" && isAdmin && (
           <ColheitaTab colheitas={colheitas} setColheitas={setColheitas} precoKg={precoKg} setPrecoKg={setPrecoKg} isAdmin={isAdmin} currentUser={currentUser} />
         )}
-        {tab === "entregas" && <EntregasTab entregas={entregas} setEntregas={setEntregas} isAdmin={isAdmin} />}
-        {tab === "eder" && (
+        {tab === "entregas" && isAdmin && <EntregasTab entregas={entregas} setEntregas={setEntregas} isAdmin={isAdmin} precoKg={precoKg} />}
+        {tab === "eder" && isAdmin && (
           <ListaFinanceira
             titulo="Pagamentos Eder"
             icon={Wallet}
@@ -605,7 +907,7 @@ export default function App() {
             ]}
           />
         )}
-        {tab === "energia" && (
+        {tab === "energia" && isAdmin && (
           <ListaFinanceira
             titulo="Energia"
             icon={Zap}
@@ -620,7 +922,7 @@ export default function App() {
             ]}
           />
         )}
-        {tab === "quimicos" && (
+        {tab === "quimicos" && isAdmin && (
           <ListaFinanceira
             titulo="Produtos químicos"
             icon={FlaskConical}
