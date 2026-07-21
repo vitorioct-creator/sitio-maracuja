@@ -1,4 +1,4 @@
-# Sítio Maracujá — como publicar
+# Vitorio Frutas — como publicar
 
 ## 1. Criar o banco de dados (Supabase — grátis)
 
